@@ -3,7 +3,9 @@ class Game {
     this.state = state;
     this.spawnedObjects = [];
     this.collidableObjects = [];
+    this.dir = 1; 
   }
+
 
   // example - we can add our own custom method to our game and call it using 'this.customMethod()'
   // customMethod() {
@@ -41,6 +43,7 @@ class Game {
 
   // runs once on startup after the scene loads the objects
   async onStart() {
+    let player = getObject(this.state, "Player");
     // console.log("On start");
 
     // // this just prevents the context menu from popping up when you right click
@@ -60,22 +63,30 @@ class Game {
     // // this.createSphereCollider(otherCube, 0.5);
 
     // // example - setting up a key press event to move an object in the scene
-    // document.addEventListener("keypress", (e) => {
-    //   e.preventDefault();
+    document.addEventListener("keypress", (e) => {
+       e.preventDefault();
 
-    //   switch (e.key) {
-    //     case "a":
-    //       this.cube.translate(vec3.fromValues(0.5, 0, 0));
-    //       break;
+       switch (e.key) {
+         case "a":
+          this.dir += 1; 
+          if (this.dir > 4) {
+            this.dir = 1; 
+          }
+          player.rotate('z', -1.5708);
+           break;
 
-    //     case "d":
-    //       this.cube.translate(vec3.fromValues(-0.5, 0, 0));
-    //       break;
+         case "d":
+          this.dir -= 1; 
+          if (this.dir < 1) {
+            this.dir = 4; 
+          }
+          player.rotate('z', 1.5708);
+           break;
 
-    //     default:
-    //       break;
-    //   }
-    // });
+         default:
+           break;
+       }
+     });
 
     // calling our custom method! (we could put spawning logic, collision logic etc in there ;)
     // this.customMethod();
@@ -119,6 +130,30 @@ class Game {
   // Runs once every frame non stop after the scene loads
   onUpdate(deltaTime) {
     // TODO - Here we can add game logic, like moving game objects, detecting collisions, you name it. Examples of functions can be found in sceneFunctions
+
+
+    // add player movement 
+    let player = getObject(this.state, "Player");
+    switch (this.dir) {
+      case 1:
+        player.translate(vec3.fromValues(0.0, 1.0*deltaTime, 0.0));  
+        break; 
+
+      case 2: 
+        player.translate(vec3.fromValues(-1.0*deltaTime, 0.0, 0.0));  
+        break; 
+
+      case 3: 
+        player.translate(vec3.fromValues(0.0, -1.0*deltaTime, 0.0));  
+        break; 
+
+      case 4: 
+        player.translate(vec3.fromValues(1.0*deltaTime, 0.0, 0.0));  
+        break; 
+
+      default:
+        break;
+    }
 
     // example: Rotate a single object we defined in our start method
     // this.cube.rotate('x', deltaTime * 0.5);
