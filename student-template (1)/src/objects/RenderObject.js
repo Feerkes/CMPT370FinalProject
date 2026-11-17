@@ -24,7 +24,7 @@ class RenderObject {
       position: vec3.fromValues(0.0, 0.0, 0.0),
       rotation: mat4.create(),
       scale: vec3.fromValues(1.0, 1.0, 1.0),
-      diffuseTexture: object.material && object.material.diffuseTexture && object.material.diffuseTexture.name ? object.material.diffuseTexture.name : "craneIconTealInverse.jpg",
+      diffuseTexture: object.material && object.material.diffuseTexture && object.material.diffuseTexture.name ? object.material.diffuseTexture.name : "craneIconTealInverse.png",
       texture: object.material && object.material.diffuseTexture && object.material.diffuseTexture.name ? getTextures(glContext, object.material.diffuseTexture.name) : null,
       normalTexture: object.material && object.material.normalTexture && object.material.normalTexture.name ? object.material.normalTexture.name : "defaultNormal.jpg",
       textureNorm: object.material && object.material.normalTexture && object.material.normalTexture.name ? getTextures(glContext, object.material.normalTexture.name) : null,
@@ -67,8 +67,9 @@ class RenderObject {
     const positions = new Float32Array(this.model.vertices);
     const normals = new Float32Array(this.model.normals);
     const indices = new Uint16Array(this.model.triangles);
+    const textureCoords = new Float32Array(this.model.uvs);
+    const bitangents = new Float32Array(this.model.bitangents);
 
-    //const textureCoords = new Float32Array(this.model.uvs);
     var vertexArrayObject = this.gl.createVertexArray();
     this.gl.bindVertexArray(vertexArrayObject);
 
@@ -77,7 +78,8 @@ class RenderObject {
       attributes: {
         position: initPositionAttribute(this.gl, this.programInfo, positions),
         normal: initNormalAttribute(this.gl, this.programInfo, normals),
-        // uv: initTextureCoords(this.gl, this.programInfo, textureCoords),
+        uv: initTextureCoords(this.gl, this.programInfo, textureCoords),
+        bitangent: initBitangentBuffer(this.gl, this.programInfo, bitangents),
       },
       indicies: initIndexBuffer(this.gl, indices),
       numVertices: indices.length
@@ -95,24 +97,35 @@ class RenderObject {
       attribLocations: {
         vertexPosition: this.gl.getAttribLocation(shaderProgram, 'aPosition'),
         vertexNormal: this.gl.getAttribLocation(shaderProgram, 'aNormal'),
-        // vertexUV: this.gl.getAttribLocation(shaderProgram, 'aUV'),
+        vertexUV: this.gl.getAttribLocation(shaderProgram, 'aUV'),
+
+                //Location of the bitangent shader attribute
+        vertexBitangent: this.gl.getAttribLocation(shaderProgram,'aBitangent'),
       },
       uniformLocations: {
         projection: this.gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
         view: this.gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
         model: this.gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
-        // normalMatrix: this.gl.getUniformLocation(shaderProgram, 'normalMatrix'),
+
+        //Blinn-Phong sutff
+        normalMatrix: this.gl.getUniformLocation(shaderProgram, 'uNormalMatrix'),
         diffuseVal: this.gl.getUniformLocation(shaderProgram, 'diffuseVal'),
-        // ambientVal: this.gl.getUniformLocation(shaderProgram, 'ambientVal'),
-        // specularVal: this.gl.getUniformLocation(shaderProgram, 'specularVal'),
-        // nVal: this.gl.getUniformLocation(shaderProgram, 'nVal'),
-        // cameraPosition: this.gl.getUniformLocation(shaderProgram, 'uCameraPosition'),
-        // numLights: this.gl.getUniformLocation(shaderProgram, 'numLights'),
+        ambientVal: this.gl.getUniformLocation(shaderProgram, 'ambientVal'),
+        specularVal: this.gl.getUniformLocation(shaderProgram, 'specularVal'),
+        nVal: this.gl.getUniformLocation(shaderProgram, 'nVal'),
+        cameraPosition: this.gl.getUniformLocation(shaderProgram, 'uCameraPosition'),
+        numLights: this.gl.getUniformLocation(shaderProgram, 'numLights'),
+
+        //Transparency uniform
+        alphaVal: this.gl.getUniformLocation(shaderProgram, 'alphaVal'),
+
         // lightPositions: this.gl.getUniformLocation(shaderProgram, 'uLightPositions'),
         // lightColours: this.gl.getUniformLocation(shaderProgram, 'uLightColours'),
         // lightStrengths: this.gl.getUniformLocation(shaderProgram, 'uLightStrengths'),
-        // sampler: this.gl.getUniformLocation(shaderProgram, 'uTexture'),
-        // samplerExists: this.gl.getUniformLocation(shaderProgram, "samplerExists")
+        sampler: this.gl.getUniformLocation(shaderProgram, 'uTexture'),
+        samplerExists: this.gl.getUniformLocation(shaderProgram, "samplerExists"), 
+        normalSampler: this.gl.getUniformLocation(shaderProgram, 'uNormalTexture'), 
+        normalSamplerExists: this.gl.getUniformLocation(shaderProgram, "normalSamplerExists"),
       },
     };
     shaderValuesErrorCheck(programInfo);
