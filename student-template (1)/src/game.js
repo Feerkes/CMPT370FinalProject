@@ -5,6 +5,13 @@ class Game {
     this.collidableObjects = [];
     this.dir = 1;
     this.camMode = 1;
+
+    //Store all player and AI trail segments for collision checks and arena resets
+    this.trailObjects = [];
+
+    //The distance an object moves before creating another trail segments
+    this.trailSpacing = 0.05;
+
   }
 
   //Get the object's bounds using the same transformations as the renderer. This prevents the 
@@ -51,6 +58,34 @@ class Game {
     return {minX: Math.min(...xValues), maxX: Math.max(...xValues), minY: Math.min(...yValues), maxY: Math.max(...yValues)};
   }
 
+  //Create a 0.10 by 0.10 collision box at the front of an object
+  getHeadBounds(object) {
+    const objectBounds = this.getBounds(object);
+    const halfSize = 0.05;
+
+    //Find the object's centre and forward direction
+    const centerX = (objectBounds.minX + objectBounds.maxX) / 2;
+    const centerY = (objectBounds.minY + objectBounds.maxY) / 2;
+    const frontX = object.model.rotation[4];
+    const frontY = object.model.rotation[5];
+
+    //Find the distance from the object's centre to its front edge
+    const frontDistance = Math.abs(frontX) > Math.abs(frontY)
+      ? (objectBounds.maxX - objectBounds.minX) / 2
+      : (objectBounds.maxY - objectBounds.minY) / 2;
+
+    //Move the smaller collision box to the front of the object
+    const headX = centerX + frontX * (frontDistance - halfSize);
+    const headY = centerY + frontY * (frontDistance - halfSize);
+
+    return {
+      minX: headX - halfSize,
+      maxX: headX + halfSize,
+      minY: headY - halfSize,
+      maxY: headY + halfSize
+    };
+  }
+
   //Check every wall by comparing its edges with the object's edges and
   //if they overlap both horizontally and vertically, a collision is found and another
   //helper function will return the player or ai to its last non-colliding position.
@@ -63,28 +98,121 @@ class Game {
       const wallBounds = this.getBounds(wall);
 
       //Return true if the object and wall overlap
-      return objectBounds.minX < wallBounds.maxX &&
-        objectBounds.maxX > wallBounds.minX &&
-        objectBounds.minY < wallBounds.maxY &&
-        objectBounds.maxY > wallBounds.minY;
+      return this.boundsOverlap(objectBounds, wallBounds);
     });
   }
 
-  // Return an object to its previous position if it enters a wall.
-  resolveWallCollision(object, previousPosition) {
-    if (this.isCollidingWithWall(object)) {
-      vec3.copy(object.model.position, previousPosition);
-    } else {
-      vec3.copy(previousPosition, object.model.position);
+  //Return true if two objects overlap on both the X and Y axes
+  boundsOverlap(firstBounds, secondBounds) {
+    return firstBounds.minX < secondBounds.maxX &&
+      firstBounds.maxX > secondBounds.minX &&
+      firstBounds.minY < secondBounds.maxY &&
+      firstBounds.maxY > secondBounds.minY;
+  }
+
+
+  //TRAIL SECTION --------------------------------------------------------
+
+  //Create one small cube as part of an object's light trail
+  createTrailSegment(owner, position, colour) {
+    const trail = addCube({
+      name: `Trail${this.trailObjects.length}`,
+      type: "cube",
+      material: {diffuse: colour, ambient: colour, specular: vec3.fromValues(0.1, 0.1, 0.1), n: 1, alpha: 1, shaderType: 0 }, //Change Later (Just did random numbers for testing collision)
+      position: vec3.clone(position),
+      scale: vec3.fromValues(0.16, 0.16, 0.2)
+    }, this.state);
+
+    //The owner ignores a new segment until it has completely moved away from it
+    trail.trailOwner = owner;
+    trail.ignoreOwner = true;
+    this.trailObjects.push(trail);
+  }
+
+  //Add trail segments as an object moves through the arena
+  updateTrail(object, lastTrailPosition, colour) {
+    const direction = vec3.create();
+    vec3.subtract(direction, object.model.position, lastTrailPosition);
+
+    const distanceMoved = vec3.length(direction);
+
+    if (distanceMoved > 0) {
+      vec3.normalize(direction, direction);
     }
+
+    //Fill every interval between the last trail point and the current position
+    while (vec3.distance(object.model.position, lastTrailPosition) >= this.trailSpacing) {
+      this.createTrailSegment(object, lastTrailPosition, colour);
+      vec3.scaleAndAdd(
+        lastTrailPosition,
+        lastTrailPosition,
+        direction,
+        this.trailSpacing
+      );
+    }
+  }
+
+  //Check whether an object has hit its own trail or the other object's trail
+  isCollidingWithTrail(object) {
+    //Only the smaller front collider can crash into a trail
+    const objectBounds = this.getHeadBounds(object);
+
+    return this.trailObjects.some((trail) => {
+      const trailBounds = this.getBounds(trail);
+      const colliding = this.boundsOverlap(objectBounds, trailBounds);
+
+      //Do not let a newly created segment collide with the object that created it to prevent the player or AI from immediately losing as soon as the game starts or when putting down their trail.
+      if (trail.trailOwner === object && trail.ignoreOwner) {
+        if (!colliding) {
+          trail.ignoreOwner = false;
+        }
+        return false;
+      }
+
+      return colliding;
+    });
+  }
+
+  //Helper function. Remove every trail and return both objects to their starting positions
+  resetArena() {
+    const trailsToRemove = new Set(this.trailObjects);
+    this.state.objects = this.state.objects.filter((object) => !trailsToRemove.has(object));
+    this.trailObjects = [];
+
+    vec3.copy(this.player.model.position, this.playerStartPosition);
+    mat4.copy(this.player.model.rotation, this.playerStartRotation);
+    vec3.copy(this.enemy.model.position, this.enemyStartPosition);
+    mat4.copy(this.enemy.model.rotation, this.enemyStartRotation);
+
+    vec3.copy(this.playerTrailPosition, this.playerStartPosition);
+    vec3.copy(this.enemyTrailPosition, this.enemyStartPosition);
+    this.dir = 1;
   }
 
   // Change the movement direction and make the player face that direction.
   setPlayerDirection(direction, angle) {
+    //Ignore a direct 180-degree turn (QOL Change)
+    const oppositeDirection =
+      (this.dir === 1 && direction === 3) ||
+      (this.dir === 3 && direction === 1) ||
+      (this.dir === 2 && direction === 4) ||
+      (this.dir === 4 && direction === 2);
+
+    if (oppositeDirection) {
+      return;
+    }
+
+    //Place a segment at the corner so the old and new trail directions connect
+    if (direction !== this.dir) {
+      this.createTrailSegment(this.player, this.player.model.position, this.playerTrailColour);
+      vec3.copy(this.playerTrailPosition, this.player.model.position);
+    }
+
     this.dir = direction;
     mat4.identity(this.player.model.rotation);
     this.player.rotate('z', angle);
   }
+
 
 
   // example - we can add our own custom method to our game and call it using 'this.customMethod()'
@@ -134,11 +262,19 @@ class Game {
       getObject(this.state, "Wall4")
     ];
 
-    //Store the player's last safe position in case it collides with a wall
-    this.previousPlayerPosition = vec3.clone(this.player.model.position);
+    //Save the starting positions and rotations so the arena can be reset
+    this.playerStartPosition = vec3.clone(this.player.model.position);
+    this.playerStartRotation = mat4.clone(this.player.model.rotation);
+    this.enemyStartPosition = vec3.clone(this.enemy.model.position);
+    this.enemyStartRotation = mat4.clone(this.enemy.model.rotation);
 
-    //Store the enemy's last safe position in case it collides with a wall
-    this.previousEnemyPosition = vec3.clone(this.enemy.model.position);
+    //Store where the next player and enemy trail segments should begin
+    this.playerTrailPosition = vec3.clone(this.player.model.position);
+    this.enemyTrailPosition = vec3.clone(this.enemy.model.position);
+
+    //Use green for the player's trail and red for the enemy's trail
+    this.playerTrailColour = vec3.fromValues(0.2, 1.0, 0.0);
+    this.enemyTrailColour = vec3.fromValues(1.0, 0.0, 0.0);
 
   
     // console.log("On start");
@@ -279,9 +415,15 @@ onUpdate(deltaTime) {
       break;
   }
 
-  //Prevent the player and AI from entering the walls
-  this.resolveWallCollision(player, this.previousPlayerPosition);
-  this.resolveWallCollision(this.enemy, this.previousEnemyPosition);
+  //Create trails for both objects when the player or AI moves.
+  this.updateTrail(player, this.playerTrailPosition, this.playerTrailColour);
+  this.updateTrail(this.enemy, this.enemyTrailPosition, this.enemyTrailColour);
+
+  //Reset the arena if either object hits a wall or any trail segment
+  if (this.isCollidingWithWall(player) || this.isCollidingWithWall(this.enemy) || this.isCollidingWithTrail(player) ||  this.isCollidingWithTrail(this.enemy)) {
+    this.resetArena();
+    return;
+  }
 
   //Use the top-down camera
   if (this.camMode == 1) {
