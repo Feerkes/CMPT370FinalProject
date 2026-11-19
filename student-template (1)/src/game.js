@@ -4,7 +4,86 @@ class Game {
     this.spawnedObjects = [];
     this.collidableObjects = [];
     this.dir = 1;
-    this.camMode = 1;  
+    this.camMode = 1;
+  }
+
+  //Get the object's bounds using the same transformations as the renderer. This prevents the 
+  //collision box from being offset when the object is rotated or scaled
+  getBounds(object) {
+
+    //Create an empty transformation matrix
+    const modelMatrix = mat4.create();
+   //Create a vector for the negative centre position
+    const negativeCentroid = vec3.create();
+
+    //Move the object, rotate it around its centre, and apply its scale.
+    vec3.negate(negativeCentroid, object.centroid);
+    mat4.translate(modelMatrix, modelMatrix, object.model.position);
+    mat4.translate(modelMatrix, modelMatrix, object.centroid);
+    mat4.mul(modelMatrix, modelMatrix, object.model.rotation);
+    mat4.scale(modelMatrix, modelMatrix, object.model.scale);
+    mat4.translate(modelMatrix, modelMatrix, negativeCentroid);
+
+    //The four corners of the original cube
+    const corners = [
+      vec3.fromValues(0, 0, 0),
+      vec3.fromValues(0.5, 0, 0),
+      vec3.fromValues(0, 0.5, 0),
+      vec3.fromValues(0.5, 0.5, 0)
+    ];
+
+    //Transform every corner using the object's position, rotation, and size
+    const transformedCorners = corners.map((corner) => {
+
+      //Create a vector for the transformed corner and calculate the corner's position in the game
+      const transformedCorner = vec3.create();
+      vec3.transformMat4(transformedCorner, corner, modelMatrix);
+
+      return transformedCorner;
+    });
+
+
+    //Collect the X & Y positions of every corner
+    const xValues = transformedCorners.map((corner) => corner[0]);
+    const yValues = transformedCorners.map((corner) => corner[1]);
+
+    //Return the object's left, right, bottom, and top edges
+    return {minX: Math.min(...xValues), maxX: Math.max(...xValues), minY: Math.min(...yValues), maxY: Math.max(...yValues)};
+  }
+
+  //Check every wall by comparing its edges with the object's edges and
+  //if they overlap both horizontally and vertically, a collision is found and another
+  //helper function will return the player or ai to its last non-colliding position.
+  isCollidingWithWall(object) {
+    const objectBounds = this.getBounds(object);
+
+    return this.walls.some((wall) => {
+      
+      //Get the wall's edges
+      const wallBounds = this.getBounds(wall);
+
+      //Return true if the object and wall overlap
+      return objectBounds.minX < wallBounds.maxX &&
+        objectBounds.maxX > wallBounds.minX &&
+        objectBounds.minY < wallBounds.maxY &&
+        objectBounds.maxY > wallBounds.minY;
+    });
+  }
+
+  // Return an object to its previous position if it enters a wall.
+  resolveWallCollision(object, previousPosition) {
+    if (this.isCollidingWithWall(object)) {
+      vec3.copy(object.model.position, previousPosition);
+    } else {
+      vec3.copy(previousPosition, object.model.position);
+    }
+  }
+
+  // Change the movement direction and make the player face that direction.
+  setPlayerDirection(direction, angle) {
+    this.dir = direction;
+    mat4.identity(this.player.model.rotation);
+    this.player.rotate('z', angle);
   }
 
 
@@ -44,7 +123,24 @@ class Game {
 
   // runs once on startup after the scene loads the objects
   async onStart() {
-    let player = getObject(this.state, "Player");
+    this.player = getObject(this.state, "Player"); //You
+    this.enemy = getObject(this.state, "Enemy");  //Your Worst Enemy
+
+    //THE WALLS you are contained in (Arena)
+    this.walls = [
+      getObject(this.state, "Wall"),
+      getObject(this.state, "Wall2"),
+      getObject(this.state, "Wall3"),
+      getObject(this.state, "Wall4")
+    ];
+
+    //Store the player's last safe position in case it collides with a wall
+    this.previousPlayerPosition = vec3.clone(this.player.model.position);
+
+    //Store the enemy's last safe position in case it collides with a wall
+    this.previousEnemyPosition = vec3.clone(this.enemy.model.position);
+
+  
     // console.log("On start");
 
     // // this just prevents the context menu from popping up when you right click
@@ -64,34 +160,35 @@ class Game {
     // // this.createSphereCollider(otherCube, 0.5);
 
     // // example - setting up a key press event to move an object in the scene
-    document.addEventListener("keypress", (e) => {
-      e.preventDefault();
-      switch (e.key) {
+
+    //WASD Movement (classic)
+    document.addEventListener("keydown", (e) => {
+      const key = e.key.toLowerCase();
+
+      switch (key) {
+        case "w":
+          e.preventDefault();
+          this.setPlayerDirection(1, 0);
+          break;
         case "a":
-          this.dir += 1; 
-          if (this.dir > 4) {
-            this.dir = 1; 
-          }
-          player.rotate('z', -1.5708);
+          e.preventDefault();
+          this.setPlayerDirection(2, 1.5708);
           break;
-
+        case "s":
+          e.preventDefault();
+          this.setPlayerDirection(3, 3.1416);
+          break;
         case "d":
-          this.dir -= 1; 
-          
-          if (this.dir < 1) {
-            this.dir = 4; 
-          }
-          player.rotate('z', 1.5708);
-          break;
-
-        case " ":
-          this.camMode *= -1; 
-          break; 
-
-        default:
+          e.preventDefault();
+          this.setPlayerDirection(4, -1.5708);
           break;
       }
-     });
+
+      if (e.key === " " && !e.repeat) {
+        e.preventDefault();
+        this.camMode *= -1;
+      }
+    });
 
     // calling our custom method! (we could put spawning logic, collision logic etc in there ;)
     // this.customMethod();
@@ -133,58 +230,65 @@ class Game {
   }
 
   // Runs once every frame non stop after the scene loads
-  onUpdate(deltaTime) {
-    // TODO - Here we can add game logic, like moving game objects, detecting collisions, you name it. Examples of functions can be found in sceneFunctions
+onUpdate(deltaTime) {
+  let player = getObject(this.state, "Player");
 
+  //Move the player continuously in the selected direction
+  switch (this.dir) {
+    case 1:
+      player.translate(vec3.fromValues(0.0, 1.0 * deltaTime, 0.0));
 
-    // add player movement 
-    let player = getObject(this.state, "Player");
-    switch (this.dir) {
-      case 1:
-        player.translate(vec3.fromValues(0.0, 1.0*deltaTime, 0.0));  
-        if (this.camMode == -1) {
-          this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25, player.model.position[1] - 0.2, player.model.position[2] + 0.5); 
-          this.state.camera.front = vec3.fromValues(0, 1, 0);
-          this.state.camera.up = vec3.fromValues(0, 0, 1); 
-        }
-        break; 
+      if (this.camMode == -1) {
+        this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25,player.model.position[1] - 0.2,player.model.position[2] + 0.5);
+        this.state.camera.front = vec3.fromValues(0, 1, 0);
+        this.state.camera.up = vec3.fromValues(0, 0, 1);
+      }
+      break;
 
-      case 2: 
-        player.translate(vec3.fromValues(-1.0*deltaTime, 0.0, 0.0));  
-        if (this.camMode == -1) {
-          this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.7, player.model.position[1]+0.25, player.model.position[2] + 0.5); 
-          this.state.camera.front = vec3.fromValues(-1, 0, 0);
-          this.state.camera.up = vec3.fromValues(0, 0, 1); 
-        }
-        break; 
+    case 2:
+      player.translate(vec3.fromValues(-1.0 * deltaTime, 0.0, 0.0));
 
-      case 3: 
-        player.translate(vec3.fromValues(0.0, -1.0*deltaTime, 0.0));
-        if (this.camMode == -1) {
-          this.state.camera.position = vec3.fromValues(player.model.position[0]+0.25, player.model.position[1] + 0.7, player.model.position[2] + 0.5); 
-          this.state.camera.front = vec3.fromValues(0, -1, 0);
-          this.state.camera.up = vec3.fromValues(0, 0, 1); 
-        }  
-        break; 
+      if (this.camMode == -1) {
+        this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.7, player.model.position[1] + 0.25,player.model.position[2] + 0.5);
+        this.state.camera.front = vec3.fromValues(-1, 0, 0);
+        this.state.camera.up = vec3.fromValues(0, 0, 1);
+      }
+      break;
 
-      case 4: 
-        player.translate(vec3.fromValues(1.0*deltaTime, 0.0, 0.0));  
-        if (this.camMode == -1) {
-          this.state.camera.position = vec3.fromValues(player.model.position[0] - 0.2, player.model.position[1]+0.25, player.model.position[2] + 0.5); 
-          this.state.camera.front = vec3.fromValues(1, 0, 0);
-          this.state.camera.up = vec3.fromValues(0, 0, 1); 
-        }
-        break; 
+    case 3:
+      player.translate(vec3.fromValues(0.0, -1.0 * deltaTime, 0.0));
 
-      default:
-        break;
-    }
+      if (this.camMode == -1) {
+        this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25,player.model.position[1] + 0.7,player.model.position[2] + 0.5);
+        this.state.camera.front = vec3.fromValues(0, -1, 0);
+        this.state.camera.up = vec3.fromValues(0, 0, 1);
+      }
+      break;
 
-    if (this.camMode == 1) {
-      this.state.camera.position = vec3.fromValues(0, 0, 6); 
-      this.state.camera.front = vec3.fromValues(0, 0, -1);
-      this.state.camera.up = vec3.fromValues(0, 1, 0); 
-    }
+    case 4:
+      player.translate(vec3.fromValues(1.0 * deltaTime, 0.0, 0.0));
+
+      if (this.camMode == -1) {
+        this.state.camera.position = vec3.fromValues(player.model.position[0] - 0.2,player.model.position[1] + 0.25,player.model.position[2] + 0.5);
+        this.state.camera.front = vec3.fromValues(1, 0, 0);
+        this.state.camera.up = vec3.fromValues(0, 0, 1);
+      }
+      break;
+
+    default:
+      break;
+  }
+
+  //Prevent the player and AI from entering the walls
+  this.resolveWallCollision(player, this.previousPlayerPosition);
+  this.resolveWallCollision(this.enemy, this.previousEnemyPosition);
+
+  //Use the top-down camera
+  if (this.camMode == 1) {
+    this.state.camera.position = vec3.fromValues(0, 0, 6);
+    this.state.camera.front = vec3.fromValues(0, 0, -1);
+    this.state.camera.up = vec3.fromValues(0, 1, 0);
+  }
 
     // example: Rotate a single object we defined in our start method
     // this.cube.rotate('x', deltaTime * 0.5);
