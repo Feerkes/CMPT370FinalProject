@@ -3,7 +3,8 @@ class Game {
     this.state = state;
     this.spawnedObjects = [];
     this.collidableObjects = [];
-    this.dir = 1; 
+    this.dir = 1;
+    this.camMode = 1;  
   }
 
 
@@ -64,28 +65,32 @@ class Game {
 
     // // example - setting up a key press event to move an object in the scene
     document.addEventListener("keypress", (e) => {
-       e.preventDefault();
-
-       switch (e.key) {
-         case "a":
+      e.preventDefault();
+      switch (e.key) {
+        case "a":
           this.dir += 1; 
           if (this.dir > 4) {
             this.dir = 1; 
           }
           player.rotate('z', -1.5708);
-           break;
+          break;
 
-         case "d":
+        case "d":
           this.dir -= 1; 
+          
           if (this.dir < 1) {
             this.dir = 4; 
           }
           player.rotate('z', 1.5708);
-           break;
+          break;
 
-         default:
-           break;
-       }
+        case " ":
+          this.camMode *= -1; 
+          break; 
+
+        default:
+          break;
+      }
      });
 
     // calling our custom method! (we could put spawning logic, collision logic etc in there ;)
@@ -137,22 +142,48 @@ class Game {
     switch (this.dir) {
       case 1:
         player.translate(vec3.fromValues(0.0, 1.0*deltaTime, 0.0));  
+        if (this.camMode == -1) {
+          this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25, player.model.position[1] - 0.2, player.model.position[2] + 0.5); 
+          this.state.camera.front = vec3.fromValues(0, 1, 0);
+          this.state.camera.up = vec3.fromValues(0, 0, 1); 
+        }
         break; 
 
       case 2: 
         player.translate(vec3.fromValues(-1.0*deltaTime, 0.0, 0.0));  
+        if (this.camMode == -1) {
+          this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.7, player.model.position[1]+0.25, player.model.position[2] + 0.5); 
+          this.state.camera.front = vec3.fromValues(-1, 0, 0);
+          this.state.camera.up = vec3.fromValues(0, 0, 1); 
+        }
         break; 
 
       case 3: 
-        player.translate(vec3.fromValues(0.0, -1.0*deltaTime, 0.0));  
+        player.translate(vec3.fromValues(0.0, -1.0*deltaTime, 0.0));
+        if (this.camMode == -1) {
+          this.state.camera.position = vec3.fromValues(player.model.position[0]+0.25, player.model.position[1] + 0.7, player.model.position[2] + 0.5); 
+          this.state.camera.front = vec3.fromValues(0, -1, 0);
+          this.state.camera.up = vec3.fromValues(0, 0, 1); 
+        }  
         break; 
 
       case 4: 
         player.translate(vec3.fromValues(1.0*deltaTime, 0.0, 0.0));  
+        if (this.camMode == -1) {
+          this.state.camera.position = vec3.fromValues(player.model.position[0] - 0.2, player.model.position[1]+0.25, player.model.position[2] + 0.5); 
+          this.state.camera.front = vec3.fromValues(1, 0, 0);
+          this.state.camera.up = vec3.fromValues(0, 0, 1); 
+        }
         break; 
 
       default:
         break;
+    }
+
+    if (this.camMode == 1) {
+      this.state.camera.position = vec3.fromValues(0, 0, 6); 
+      this.state.camera.front = vec3.fromValues(0, 0, -1);
+      this.state.camera.up = vec3.fromValues(0, 1, 0); 
     }
 
     // example: Rotate a single object we defined in our start method
