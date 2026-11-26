@@ -463,24 +463,68 @@ class Game {
     //WASD Movement (classic)
     document.addEventListener("keydown", (e) => {
       const key = e.key.toLowerCase();
-
-      switch (key) {
-        case "w":
-          e.preventDefault();
-          this.setPlayerDirection(1, 0);
-          break;
-        case "a":
-          e.preventDefault();
-          this.setPlayerDirection(2, 1.5708);
-          break;
-        case "s":
-          e.preventDefault();
-          this.setPlayerDirection(3, 3.1416);
-          break;
-        case "d":
-          e.preventDefault();
-          this.setPlayerDirection(4, -1.5708);
-          break;
+      if (this.camMode == 1) {
+        switch (key) {
+          case "w":
+            e.preventDefault();
+            this.setPlayerDirection(1, 0);
+            break;
+          case "a":
+            e.preventDefault();
+            this.setPlayerDirection(2, 1.5708);
+            break;
+          case "s":
+            e.preventDefault();
+            this.setPlayerDirection(3, 3.1416);
+            break;
+          case "d":
+            e.preventDefault();
+            this.setPlayerDirection(4, -1.5708);
+            break;
+        }
+      } else if (this.camMode == -1) {
+        let newdir = this.dir
+        switch (key) {
+          case "a":
+            e.preventDefault(); 
+            newdir+=1; 
+            if (newdir>4) {newdir = 1;}
+            switch (newdir){
+              case 1:
+                this.setPlayerDirection(newdir, 0); 
+                break; 
+              case 2:
+                this.setPlayerDirection(newdir, 1.5708); 
+                break; 
+              case 3:
+                this.setPlayerDirection(newdir, 3.1416); 
+                break; 
+              case 4: 
+                this.setPlayerDirection(newdir, -1.5708); 
+                break; 
+            }
+            break; 
+          
+          case "d":
+            e.preventDefault(); 
+            newdir -= 1; 
+            if (newdir<1) {newdir = 4;}
+            switch (newdir){
+              case 1:
+                this.setPlayerDirection(newdir, 0); 
+                break; 
+              case 2:
+                this.setPlayerDirection(newdir, 1.5708); 
+                break; 
+              case 3:
+                this.setPlayerDirection(newdir, 3.1416); 
+                break; 
+              case 4: 
+                this.setPlayerDirection(newdir, -1.5708); 
+                break; 
+            }
+            break;
+        }
       }
 
       if (e.key === " " && !e.repeat) {
