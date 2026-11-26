@@ -6,11 +6,13 @@ class Game {
     this.dir = 1;
     this.camMode = 1;
 
-    //Store all player and AI trail segments for collision checks and arena resets
-    this.trailObjects = [];
+    //Store simple collision boxes for the player and enemy trails
+    this.trailSegments = [];
 
-    //The distance an object moves before creating another trail segments
+    //The size and spacing of the connected trail mesh
     this.trailSpacing = 0.05;
+    this.trailHalfWidth = 0.04;
+    this.trailHalfHeight = 0.05;
 
   }
 
@@ -86,6 +88,20 @@ class Game {
     };
   }
 
+  //Return the centre of an object in world coordinates
+  getObjectCenter(object) {
+    const center = vec3.create();
+    vec3.add(center, object.model.position, object.centroid);
+    return center;
+  }
+
+  //Return the direction that an object is facing
+  getObjectDirection(object) {
+    const direction = vec3.fromValues(object.model.rotation[4], object.model.rotation[5], 0);
+    vec3.normalize(direction, direction);
+    return direction;
+  }
+
   //Check every wall by comparing its edges with the object's edges and
   //if they overlap both horizontally and vertically, a collision is found and another
   //helper function will return the player or ai to its last non-colliding position.
@@ -113,42 +129,177 @@ class Game {
 
   //TRAIL SECTION --------------------------------------------------------
 
-  //Create one small cube as part of an object's light trail
-  createTrailSegment(owner, position, colour) {
-    const trail = addCube({
-      name: `Trail${this.trailObjects.length}`,
-      type: "cube",
-      material: {diffuse: colour, ambient: colour, specular: vec3.fromValues(0.1, 0.1, 0.1), n: 1, alpha: 1, shaderType: 0 }, //Change Later (Just did random numbers for testing collision)
-      position: vec3.clone(position),
-      scale: vec3.fromValues(0.16, 0.16, 0.2)
-    }, this.state);
+  //Clear one of the existing light-trail objects and begin a new connected mesh
+  resetTrailMesh(trail, startPosition, startDirection) {
+    trail.model.position = vec3.create();
+    trail.model.scale = vec3.fromValues(1, 1, 1);
+    trail.model.rotation = mat4.create();
+    trail.model.vertices = [];
+    trail.model.normals = [];
+    trail.model.uvs = [];
+    trail.model.bitangents = [];
+    trail.model.triangles = [];
+    trail.ringCount = 0;
+    trail.lastCenter = null;
+    trail.lastDirection = null;
 
-    //The owner ignores a new segment until it has completely moved away from it
-    trail.trailOwner = owner;
-    trail.ignoreOwner = true;
-    this.trailObjects.push(trail);
+    this.addTrailRing(trail, startPosition, startDirection);
+    this.updateTrailBuffers(trail);
   }
 
-  //Add trail segments as an object moves through the arena
-  updateTrail(object, lastTrailPosition, colour) {
+  //Add four vertices and connect them to the previous four vertices
+  addTrailRing(trail, center, direction) {
+    const forward = vec3.fromValues(direction[0], direction[1], 0);
+
+    if (vec3.length(forward) === 0) {
+      return false;
+    }
+
+    vec3.normalize(forward, forward);
+
+    //Do not add the same four vertices twice
+    if (trail.lastCenter && vec3.distance(trail.lastCenter, center) < 0.000001 &&
+      vec3.dot(trail.lastDirection, forward) > 0.9999) {
+      return false;
+    }
+
+    const right = vec3.fromValues(forward[1], -forward[0], 0);
+    const leftX = center[0] - right[0] * this.trailHalfWidth;
+    const leftY = center[1] - right[1] * this.trailHalfWidth;
+    const rightX = center[0] + right[0] * this.trailHalfWidth;
+    const rightY = center[1] + right[1] * this.trailHalfWidth;
+    const bottomZ = center[2] - this.trailHalfHeight;
+    const topZ = center[2] + this.trailHalfHeight;
+    const firstVertex = trail.ringCount * 4;
+
+    trail.model.vertices.push(
+      leftX, leftY, bottomZ,
+      rightX, rightY, bottomZ,
+      rightX, rightY, topZ,
+      leftX, leftY, topZ
+    );
+
+    //The trail uses its material colour, so these simple values are enough
+    for (let i = 0; i < 4; i++) {
+      trail.model.normals.push(0, 0, 1);
+      trail.model.bitangents.push(1, 0, 0);
+    }
+    trail.model.uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+
+    if (trail.ringCount > 0) {
+      const previous = firstVertex - 4;
+
+      //Connect the previous four points to the new four points
+      trail.model.triangles.push(
+        previous, previous + 1, firstVertex + 1,
+        previous, firstVertex + 1, firstVertex,
+
+        previous + 1, previous + 2, firstVertex + 2,
+        previous + 1, firstVertex + 2, firstVertex + 1,
+
+        previous + 2, previous + 3, firstVertex + 3,
+        previous + 2, firstVertex + 3, firstVertex + 2,
+
+        previous + 3, previous, firstVertex,
+        previous + 3, firstVertex, firstVertex + 3,
+
+        firstVertex, firstVertex + 1, firstVertex + 2,
+        firstVertex, firstVertex + 2, firstVertex + 3
+      );
+    }
+
+    trail.ringCount += 1;
+    trail.lastCenter = vec3.clone(center);
+    trail.lastDirection = vec3.clone(forward);
+    return true;
+  }
+
+  //Upload the changed arrays to the existing trail object's buffers
+  updateTrailBuffers(trail) {
+    const gl = this.state.gl;
+    gl.bindVertexArray(trail.buffers.vao);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, trail.buffers.attributes.position);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trail.model.vertices), gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, trail.buffers.attributes.normal);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trail.model.normals), gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, trail.buffers.attributes.uv);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trail.model.uvs), gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, trail.buffers.attributes.bitangent);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trail.model.bitangents), gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, trail.buffers.indicies);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(trail.model.triangles), gl.DYNAMIC_DRAW);
+    trail.buffers.numVertices = trail.model.triangles.length;
+  }
+
+  //Add four vertices and one simple collision box at the next trail point
+  addTrailPoint(trail, owner, position, direction) {
+    const previousCenter = trail.lastCenter ? vec3.clone(trail.lastCenter) : null;
+
+    if (!this.addTrailRing(trail, position, direction)) {
+      return false;
+    }
+
+    if (previousCenter && vec3.distance(previousCenter, position) > 0.000001) {
+      this.trailSegments.push({
+        owner: owner,
+        ignoreOwner: true,
+        minX: Math.min(previousCenter[0], position[0]) - this.trailHalfWidth,
+        maxX: Math.max(previousCenter[0], position[0]) + this.trailHalfWidth,
+        minY: Math.min(previousCenter[1], position[1]) - this.trailHalfWidth,
+        maxY: Math.max(previousCenter[1], position[1]) + this.trailHalfWidth
+      });
+    }
+
+    return true;
+  }
+
+  //Extend one connected trail mesh as an object moves through the arena
+  updateTrail(object, trail, lastTrailPosition) {
+    const currentPosition = this.getObjectCenter(object);
     const direction = vec3.create();
-    vec3.subtract(direction, object.model.position, lastTrailPosition);
+    vec3.subtract(direction, currentPosition, lastTrailPosition);
 
     const distanceMoved = vec3.length(direction);
 
-    if (distanceMoved > 0) {
-      vec3.normalize(direction, direction);
+    if (distanceMoved <= 0) {
+      return;
+    }
+
+    vec3.normalize(direction, direction);
+    let changed = false;
+
+    //Add another four points at a turn so there is no gap in the corner
+    if (trail.lastDirection && vec3.dot(trail.lastDirection, direction) < 0.9999) {
+      changed = this.addTrailPoint(trail, object, lastTrailPosition, direction) || changed;
     }
 
     //Fill every interval between the last trail point and the current position
-    while (vec3.distance(object.model.position, lastTrailPosition) >= this.trailSpacing) {
-      this.createTrailSegment(object, lastTrailPosition, colour);
-      vec3.scaleAndAdd(
-        lastTrailPosition,
-        lastTrailPosition,
-        direction,
-        this.trailSpacing
-      );
+    while (vec3.distance(currentPosition, lastTrailPosition) >= this.trailSpacing) {
+      const nextPosition = vec3.create();
+      vec3.scaleAndAdd(nextPosition, lastTrailPosition, direction, this.trailSpacing);
+      changed = this.addTrailPoint(trail, object, nextPosition, direction) || changed;
+      vec3.copy(lastTrailPosition, nextPosition);
+    }
+
+    if (changed) {
+      this.updateTrailBuffers(trail);
+    }
+  }
+
+  //Finish the old straight section at the exact corner before turning
+  finishTrailAtTurn(object, trail, lastTrailPosition) {
+    const currentPosition = this.getObjectCenter(object);
+
+    if (vec3.distance(currentPosition, lastTrailPosition) > 0.000001) {
+      if (this.addTrailPoint(trail, object, currentPosition, this.getObjectDirection(object))) {
+        this.updateTrailBuffers(trail);
+      }
+      vec3.copy(lastTrailPosition, currentPosition);
     }
   }
 
@@ -157,14 +308,13 @@ class Game {
     //Only the smaller front collider can crash into a trail
     const objectBounds = this.getHeadBounds(object);
 
-    return this.trailObjects.some((trail) => {
-      const trailBounds = this.getBounds(trail);
-      const colliding = this.boundsOverlap(objectBounds, trailBounds);
+    return this.trailSegments.some((segment) => {
+      const colliding = this.boundsOverlap(objectBounds, segment);
 
       //Do not let a newly created segment collide with the object that created it to prevent the player or AI from immediately losing as soon as the game starts or when putting down their trail.
-      if (trail.trailOwner === object && trail.ignoreOwner) {
+      if (segment.owner === object && segment.ignoreOwner) {
         if (!colliding) {
-          trail.ignoreOwner = false;
+          segment.ignoreOwner = false;
         }
         return false;
       }
@@ -175,17 +325,19 @@ class Game {
 
   //Helper function. Remove every trail and return both objects to their starting positions
   resetArena() {
-    const trailsToRemove = new Set(this.trailObjects);
-    this.state.objects = this.state.objects.filter((object) => !trailsToRemove.has(object));
-    this.trailObjects = [];
-
     vec3.copy(this.player.model.position, this.playerStartPosition);
     mat4.copy(this.player.model.rotation, this.playerStartRotation);
     vec3.copy(this.enemy.model.position, this.enemyStartPosition);
     mat4.copy(this.enemy.model.rotation, this.enemyStartRotation);
 
-    vec3.copy(this.playerTrailPosition, this.playerStartPosition);
-    vec3.copy(this.enemyTrailPosition, this.enemyStartPosition);
+    const playerCenter = this.getObjectCenter(this.player);
+    const enemyCenter = this.getObjectCenter(this.enemy);
+    vec3.copy(this.playerTrailPosition, playerCenter);
+    vec3.copy(this.enemyTrailPosition, enemyCenter);
+
+    this.trailSegments = [];
+    this.resetTrailMesh(this.playerTrail, playerCenter, this.getObjectDirection(this.player));
+    this.resetTrailMesh(this.enemyTrail, enemyCenter, this.getObjectDirection(this.enemy));
     this.dir = 1;
   }
 
@@ -202,10 +354,9 @@ class Game {
       return;
     }
 
-    //Place a segment at the corner so the old and new trail directions connect
+    //Finish the old trail section before turning
     if (direction !== this.dir) {
-      this.createTrailSegment(this.player, this.player.model.position, this.playerTrailColour);
-      vec3.copy(this.playerTrailPosition, this.player.model.position);
+      this.finishTrailAtTurn(this.player, this.playerTrail, this.playerTrailPosition);
     }
 
     this.dir = direction;
@@ -268,13 +419,25 @@ class Game {
     this.enemyStartPosition = vec3.clone(this.enemy.model.position);
     this.enemyStartRotation = mat4.clone(this.enemy.model.rotation);
 
-    //Store where the next player and enemy trail segments should begin
-    this.playerTrailPosition = vec3.clone(this.player.model.position);
-    this.enemyTrailPosition = vec3.clone(this.enemy.model.position);
-
     //Use green for the player's trail and red for the enemy's trail
     this.playerTrailColour = vec3.fromValues(0.2, 1.0, 0.0);
     this.enemyTrailColour = vec3.fromValues(1.0, 0.0, 0.0);
+
+    //Reuse the two trail objects that are already in the scene file
+    this.playerTrail = getObject(this.state, "light trail player");
+    this.enemyTrail = getObject(this.state, "light trail enemy");
+    this.playerTrail.material.diffuse = this.playerTrailColour;
+    this.playerTrail.material.ambient = this.playerTrailColour;
+    this.enemyTrail.material.diffuse = this.enemyTrailColour;
+    this.enemyTrail.material.ambient = this.enemyTrailColour;
+
+    const playerCenter = this.getObjectCenter(this.player);
+    const enemyCenter = this.getObjectCenter(this.enemy);
+    this.playerTrailPosition = vec3.clone(playerCenter);
+    this.enemyTrailPosition = vec3.clone(enemyCenter);
+
+    this.resetTrailMesh(this.playerTrail, playerCenter, this.getObjectDirection(this.player));
+    this.resetTrailMesh(this.enemyTrail, enemyCenter, this.getObjectDirection(this.enemy));
 
   
     // console.log("On start");
@@ -415,9 +578,9 @@ onUpdate(deltaTime) {
       break;
   }
 
-  //Create trails for both objects when the player or AI moves.
-  this.updateTrail(player, this.playerTrailPosition, this.playerTrailColour);
-  this.updateTrail(this.enemy, this.enemyTrailPosition, this.enemyTrailColour);
+  //Extend the player and enemy's single trail meshes as they move
+  this.updateTrail(player, this.playerTrail, this.playerTrailPosition);
+  this.updateTrail(this.enemy, this.enemyTrail, this.enemyTrailPosition);
 
   //Reset the arena if either object hits a wall or any trail segment
   if (this.isCollidingWithWall(player) || this.isCollidingWithWall(this.enemy) || this.isCollidingWithTrail(player) ||  this.isCollidingWithTrail(this.enemy)) {
