@@ -639,6 +639,11 @@ onUpdate(deltaTime) {
     this.state.camera.up = vec3.fromValues(0, 1, 0);
   }
 
+
+  //have the point light follow the player
+  //this.playerLight = getObject(this.state, "playerLight");
+  //this.state. = vec3.fromValues(this.player.model.position.x, this.player.model.position.y, 4.0); 
+
     // example: Rotate a single object we defined in our start method
     // this.cube.rotate('x', deltaTime * 0.5);
 
