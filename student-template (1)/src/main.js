@@ -304,15 +304,18 @@ function drawScene(gl, deltaTime, state) {
   //Above here ------------------------------------------------------------
 
   // sort objects by nearness to camera
-  let sorted = state.objects.sort((a, b) => {
+  let sorted = [...state.objects].sort((a, b) => {
     let aCentroidFour = vec4.fromValues(a.centroid[0], a.centroid[1], a.centroid[2], 1.0);
     vec4.transformMat4(aCentroidFour, aCentroidFour, a.modelMatrix);
 
     let bCentroidFour = vec4.fromValues(b.centroid[0], b.centroid[1], b.centroid[2], 1.0);
     vec4.transformMat4(bCentroidFour, bCentroidFour, b.modelMatrix);
 
-    return vec3.distance(state.camera.position, vec3.fromValues(aCentroidFour[0], aCentroidFour[1], aCentroidFour[2]))
-      >= vec3.distance(state.camera.position, vec3.fromValues(bCentroidFour[0], bCentroidFour[1], bCentroidFour[2])) ? -1 : 1;
+    const aDistance = vec3.distance(state.camera.position, vec3.fromValues(aCentroidFour[0], aCentroidFour[1], aCentroidFour[2]));
+    const bDistance = vec3.distance(state.camera.position, vec3.fromValues(bCentroidFour[0], bCentroidFour[1], bCentroidFour[2]));
+
+    //Draw far objects first, while keeping equal-distance objects in a stable order
+    return bDistance - aDistance;
   });
 
   // iterate over each object and render them
@@ -321,13 +324,21 @@ function drawScene(gl, deltaTime, state) {
     {
 
       //If transparency is below 1.0 (or turned on), apply depthMask
-      if (object.material.alpha < 1.0){
+      if (object.material.alpha < 1.0 && !object.forceDepthWrite){
         gl.depthMask(false);
       } 
       
       //if object is 1.0, do not turn on depthMask since it does not need transparency
       else{
         gl.depthMask(true);
+      }
+
+      //A depth bias prevents two connected trails from competing for the same pixels
+      if (object.depthBias) {
+        gl.enable(gl.POLYGON_OFFSET_FILL);
+        gl.polygonOffset(object.depthBias, object.depthBias);
+      } else {
+        gl.disable(gl.POLYGON_OFFSET_FILL);
       }
 
       // Projection Matrix ....

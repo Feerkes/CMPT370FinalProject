@@ -5,6 +5,8 @@ class Game {
     this.collidableObjects = [];
     this.dir = 1;
     this.camMode = 1;
+    this.playerScore = 0;
+    this.enemyScore = 0;
 
     //Store simple collision boxes for the player and enemy trails
     this.trailSegments = [];
@@ -13,6 +15,16 @@ class Game {
     this.trailSpacing = 0.05;
     this.trailHalfWidth = 0.04;
     this.trailHalfHeight = 0.05;
+
+    //Both objects use the same speed, which increases as the round continues
+    this.startSpeed = 1.0;
+    this.currentSpeed = this.startSpeed;
+    this.speedIncreasePerSecond = 0.03;
+    this.maxSpeed = 5.0;
+
+    //Basic enemy movement and obstacle avoidance
+    this.enemyDir = 1;
+    this.enemyLookAhead = 0.45;
 
   }
 
@@ -323,6 +335,12 @@ class Game {
     });
   }
 
+  //Display the current player and AI scores
+  updateScoreCounter() {
+    document.getElementById("playerScore").textContent = this.playerScore;
+    document.getElementById("enemyScore").textContent = this.enemyScore;
+  }
+
   //Helper function. Remove every trail and return both objects to their starting positions
   resetArena() {
     vec3.copy(this.player.model.position, this.playerStartPosition);
@@ -339,6 +357,8 @@ class Game {
     this.resetTrailMesh(this.playerTrail, playerCenter, this.getObjectDirection(this.player));
     this.resetTrailMesh(this.enemyTrail, enemyCenter, this.getObjectDirection(this.enemy));
     this.dir = 1;
+    this.enemyDir = 1;
+    this.currentSpeed = this.startSpeed;
   }
 
   // Change the movement direction and make the player face that direction.
@@ -362,6 +382,91 @@ class Game {
     this.dir = direction;
     mat4.identity(this.player.model.rotation);
     this.player.rotate('z', angle);
+  }
+
+  //ENEMY AI SECTION -----------------------------------------------------
+
+  //Return the movement vector and rotation for one of the four directions
+  getDirectionData(direction) {
+    switch (direction) {
+      case 1:
+        return {movement: vec3.fromValues(0, 1, 0), angle: 0};
+      case 2:
+        return {movement: vec3.fromValues(-1, 0, 0), angle: 1.5708};
+      case 3:
+        return {movement: vec3.fromValues(0, -1, 0), angle: 3.1416};
+      case 4:
+        return {movement: vec3.fromValues(1, 0, 0), angle: -1.5708};
+    }
+  }
+
+  //Check a small square ahead of the enemy for a wall or trail
+  isEnemyDirectionBlocked(direction) {
+    const directionData = this.getDirectionData(direction);
+    const enemyCenter = this.getObjectCenter(this.enemy);
+    const checkX = enemyCenter[0] + directionData.movement[0] * this.enemyLookAhead;
+    const checkY = enemyCenter[1] + directionData.movement[1] * this.enemyLookAhead;
+    const halfSize = 0.05;
+    const checkBounds = {
+      minX: checkX - halfSize,
+      maxX: checkX + halfSize,
+      minY: checkY - halfSize,
+      maxY: checkY + halfSize
+    };
+
+    const wallBlocked = this.walls.some((wall) =>
+      this.boundsOverlap(checkBounds, this.getBounds(wall))
+    );
+
+    const trailBlocked = this.trailSegments.some((segment) => {
+      //Ignore the newest part of the enemy's own trail while it is still nearby
+      if (segment.owner === this.enemy && segment.ignoreOwner) {
+        return false;
+      }
+      return this.boundsOverlap(checkBounds, segment);
+    });
+
+    return wallBlocked || trailBlocked;
+  }
+
+  //Turn the enemy and finish its old trail section at the corner
+  setEnemyDirection(direction) {
+    if (direction === this.enemyDir) {
+      return;
+    }
+
+    this.finishTrailAtTurn(this.enemy, this.enemyTrail, this.enemyTrailPosition);
+    this.enemyDir = direction;
+
+    const directionData = this.getDirectionData(direction);
+    mat4.identity(this.enemy.model.rotation);
+    this.enemy.rotate('z', directionData.angle);
+  }
+
+  //Move forward and make a safe random 90-degree turn when something is ahead
+  updateEnemy(deltaTime) {
+    if (this.isEnemyDirectionBlocked(this.enemyDir)) {
+      const leftDirection = this.enemyDir === 4 ? 1 : this.enemyDir + 1;
+      const rightDirection = this.enemyDir === 1 ? 4 : this.enemyDir - 1;
+      const safeDirections = [];
+
+      if (!this.isEnemyDirectionBlocked(leftDirection)) {
+        safeDirections.push(leftDirection);
+      }
+      if (!this.isEnemyDirectionBlocked(rightDirection)) {
+        safeDirections.push(rightDirection);
+      }
+
+      if (safeDirections.length > 0) {
+        const choice = Math.floor(Math.random() * safeDirections.length);
+        this.setEnemyDirection(safeDirections[choice]);
+      }
+    }
+
+    const directionData = this.getDirectionData(this.enemyDir);
+    const movement = vec3.create();
+    vec3.scale(movement, directionData.movement, this.currentSpeed * deltaTime);
+    this.enemy.translate(movement);
   }
 
 
@@ -426,6 +531,9 @@ class Game {
     //Reuse the two trail objects that are already in the scene file
     this.playerTrail = getObject(this.state, "light trail player");
     this.enemyTrail = getObject(this.state, "light trail enemy");
+    //Keep trail intersections in a stable depth order without changing their shapes
+    this.playerTrail.forceDepthWrite = true;
+    this.enemyTrail.depthBias = 2;
     this.playerTrail.material.diffuse = this.playerTrailColour;
     this.playerTrail.material.ambient = this.playerTrailColour;
     this.enemyTrail.material.diffuse = this.enemyTrailColour;
@@ -438,6 +546,7 @@ class Game {
 
     this.resetTrailMesh(this.playerTrail, playerCenter, this.getObjectDirection(this.player));
     this.resetTrailMesh(this.enemyTrail, enemyCenter, this.getObjectDirection(this.enemy));
+    this.updateScoreCounter();
 
   
     // console.log("On start");
@@ -576,10 +685,16 @@ class Game {
 onUpdate(deltaTime) {
   let player = getObject(this.state, "Player");
 
+  //Gradually speed up both the player and enemy, up to the maximum speed
+  this.currentSpeed = Math.min(
+    this.maxSpeed,
+    this.currentSpeed + this.speedIncreasePerSecond * deltaTime
+  );
+
   //Move the player continuously in the selected direction
   switch (this.dir) {
     case 1:
-      player.translate(vec3.fromValues(0.0, 1.0 * deltaTime, 0.0));
+      player.translate(vec3.fromValues(0.0, this.currentSpeed * deltaTime, 0.0));
 
       if (this.camMode == -1) {
         this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25,player.model.position[1] - 0.2,player.model.position[2] + 0.5);
@@ -589,7 +704,7 @@ onUpdate(deltaTime) {
       break;
 
     case 2:
-      player.translate(vec3.fromValues(-1.0 * deltaTime, 0.0, 0.0));
+      player.translate(vec3.fromValues(-this.currentSpeed * deltaTime, 0.0, 0.0));
 
       if (this.camMode == -1) {
         this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.7, player.model.position[1] + 0.25,player.model.position[2] + 0.5);
@@ -599,7 +714,7 @@ onUpdate(deltaTime) {
       break;
 
     case 3:
-      player.translate(vec3.fromValues(0.0, -1.0 * deltaTime, 0.0));
+      player.translate(vec3.fromValues(0.0, -this.currentSpeed * deltaTime, 0.0));
 
       if (this.camMode == -1) {
         this.state.camera.position = vec3.fromValues(player.model.position[0] + 0.25,player.model.position[1] + 0.7,player.model.position[2] + 0.5);
@@ -609,7 +724,7 @@ onUpdate(deltaTime) {
       break;
 
     case 4:
-      player.translate(vec3.fromValues(1.0 * deltaTime, 0.0, 0.0));
+      player.translate(vec3.fromValues(this.currentSpeed * deltaTime, 0.0, 0.0));
 
       if (this.camMode == -1) {
         this.state.camera.position = vec3.fromValues(player.model.position[0] - 0.2,player.model.position[1] + 0.25,player.model.position[2] + 0.5);
@@ -622,12 +737,25 @@ onUpdate(deltaTime) {
       break;
   }
 
+  //Move the enemy and turn before it reaches a wall or trail
+  this.updateEnemy(deltaTime);
+
   //Extend the player and enemy's single trail meshes as they move
   this.updateTrail(player, this.playerTrail, this.playerTrailPosition);
   this.updateTrail(this.enemy, this.enemyTrail, this.enemyTrailPosition);
 
-  //Reset the arena if either object hits a wall or any trail segment
-  if (this.isCollidingWithWall(player) || this.isCollidingWithWall(this.enemy) || this.isCollidingWithTrail(player) ||  this.isCollidingWithTrail(this.enemy)) {
+  //Award one point to the survivor, then reset the arena
+  const playerCrashed = this.isCollidingWithWall(player) || this.isCollidingWithTrail(player);
+  const enemyCrashed = this.isCollidingWithWall(this.enemy) || this.isCollidingWithTrail(this.enemy);
+
+  if (playerCrashed || enemyCrashed) {
+    if (playerCrashed && !enemyCrashed) {
+      this.enemyScore += 1;
+    } else if (enemyCrashed && !playerCrashed) {
+      this.playerScore += 1;
+    }
+
+    this.updateScoreCounter();
     this.resetArena();
     return;
   }
